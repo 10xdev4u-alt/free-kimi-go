@@ -28,3 +28,21 @@ func main() {
 		ReadTimeout:  0,
 		WriteTimeout: 0,
 		IdleTimeout:  0,
+	})
+
+	app.Use(logger.New())
+	app.Use(recover.New())
+	app.Use(cors.New())
+
+	app.Get("/ping", func(c *fiber.Ctx) error { return c.SendString("pong") })
+	v1 := app.Group("/v1")
+	v1.Get("/models", models.HandleModels)
+	v1.Post("/chat/completions", chatHandler.HandleCompletions)
+
+	port := os.Getenv("PORT")
+	if port == "" { port = "8788" }
+	logrus.Infof("Service starting on port %s...", port)
+	if err := app.Listen(":" + port); err != nil {
+		logrus.Fatalf("Failed to start server: %v", err)
+	}
+}
