@@ -178,3 +178,47 @@ func (c *KimiClient) UploadFile(fileUrl, accessToken, userId string) (string, er
 		fileData = data
 		contentType = strings.TrimPrefix(strings.Split(parts[0], ";")[0], "data:")
 		filename = fmt.Sprintf("%s.%s", core.UUID(false), strings.Split(contentType, "/")[1])
+	} else {
+		resp, _ := c.httpClient.Get(fileUrl)
+		defer resp.Body.Close()
+		fileData, _ = io.ReadAll(resp.Body)
+		contentType = resp.Header.Get("Content-Type")
+	}
+	u, o, _ := c.PreSignUrl(filename, accessToken, userId)
+	c.UploadToOSS(u, fileData, contentType, accessToken, userId)
+	f, s, _ := c.CreateFile(filename, o, accessToken, userId)
+	st := core.UnixTimestamp()
+	for s != "initialized" {
+		if core.UnixTimestamp()-st > 30 { return "", fmt.Errorf("timeout") }
+		time.Sleep(2 * time.Second)
+		_, s, _ = c.CreateFile(filename, o, accessToken, userId)
+	}
+	c.ParseFile(f, accessToken, userId)
+	return f, nil
+}
+
+func PrepareMessages(messages []Message, tools []Tool, isRefConv bool) []map[string]interface{} {
+	var history strings.Builder
+	for i, msg := range messages {
+		msgContent := ""
+		switch c := msg.Content.(type) {
+		case string: msgContent = c
+		case []interface{}:
+			for _, part := range c {
+				if m, ok := part.(map[string]interface{}); ok { if m["type"] == "text" { msgContent += fmt.Sprintf("%v", m["text"]) } }
+			}
+		}
+		if !isRefConv && i == len(messages)-1 {
+			history.WriteString("system: Use tools if needed. Follow Claude Code protocol.\n")
+		}
+		history.WriteString(fmt.Sprintf("%s: %s\n", msg.Role, msgContent))
+	}
+	return []map[string]interface{}{{"role": "user", "content": history.String()}}
+}
+
+func wrapUrlsToTags(content string) string {
+	var urlRegex = regexp.MustCompile(`https?://(www\.)?[-a-zA-Z0-9@:%._\+~#=]{2,256}\.[a-z]{2,6}\b([-a-zA-Z0-9@:%_\+.~#?&//=]*)`)
+	return urlRegex.ReplaceAllStringFunc(content, func(url string) string {
+		return fmt.Sprintf(`<url id="" type="url" status="" title="" wc="">%s</url>`, url)
+	})
+}
