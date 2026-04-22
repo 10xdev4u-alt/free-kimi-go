@@ -43,3 +43,45 @@ func (m *TokenManager) GetToken(authHeader string) (*core.TokenInfo, error) {
 	// Check cache
 	if val, ok := m.tokens.Load(refreshToken); ok {
 		info := val.(*core.TokenInfo)
+		if core.UnixTimestamp() < info.RefreshTime {
+			return info, nil
+		}
+	}
+
+	// Need refresh
+	return m.refreshToken(refreshToken)
+}
+
+func (m *TokenManager) refreshToken(refreshToken string) (*core.TokenInfo, error) {
+	// Lock for this specific refresh token
+	lockVal, _ := m.refreshLocks.LoadOrStore(refreshToken, &sync.Mutex{})
+	lock := lockVal.(*sync.Mutex)
+	lock.Lock()
+	defer lock.Unlock()
+
+	// Double check after lock
+	if val, ok := m.tokens.Load(refreshToken); ok {
+		info := val.(*core.TokenInfo)
+		if core.UnixTimestamp() < info.RefreshTime {
+			return info, nil
+		}
+	}
+
+	logrus.Infof("Refreshing token: %s...", refreshToken[:10])
+	info, err := m.client.RequestToken(refreshToken)
+	if err != nil {
+		return nil, err
+	}
+
+	// 300s expiry (consistent with TS)
+	info.RefreshTime = core.UnixTimestamp() + 300
+	m.tokens.Store(refreshToken, info)
+	logrus.Infof("Successfully refreshed token for user: %s", info.UserId)
+
+	return info, nil
+}
+
+// MoonshotClient placeholder - we will define it in internal/chat/client.go
+type MoonshotClient interface {
+	RequestToken(refreshToken string) (*core.TokenInfo, error)
+}
