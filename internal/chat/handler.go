@@ -73,3 +73,76 @@ func (h *ChatHandler) handleStream(c *fiber.Ctx, req ChatCompletionRequest, toke
 	c.Set("Connection", "keep-alive")
 	c.Set("X-Accel-Buffering", "no") // Disable Nginx buffering
 
+	outputChan := make(chan string, 100)
+	go func() {
+		defer close(outputChan)
+		err := h.kimiClient.CreateCompletionStream(req.Model, req.Messages, req.Tools, tokenInfo.AccessToken, tokenInfo.UserId, req.UseSearch, convId, outputChan)
+		if err != nil {
+			logrus.Errorf("[BEAST] Stream failed: %v", err)
+		}
+		if req.ConversationId == "" {
+			h.kimiClient.RemoveConversation(convId, tokenInfo.AccessToken, tokenInfo.UserId)
+		}
+	}()
+
+	// Heartbeat logic: Send a comment every 5s if Kimi is silent
+	c.Context().SetBodyStreamWriter(func(w *bufio.Writer) {
+		for {
+			select {
+			case msg, ok := <-outputChan:
+				if !ok { return }
+				fmt.Fprint(w, msg)
+				w.Flush()
+			case <-time.After(5 * time.Second):
+				// SSE Heartbeat comment to keep connection alive
+				fmt.Fprint(w, ": heartbeat\n\n")
+				w.Flush()
+			}
+		}
+	})
+	return nil
+}
+
+func (h *ChatHandler) handleNonStream(c *fiber.Ctx, req ChatCompletionRequest, tokenInfo *core.TokenInfo, convId string) error {
+	outputChan := make(chan string, 100)
+	var fullContent strings.Builder
+
+	go func() {
+		defer close(outputChan)
+		h.kimiClient.CreateCompletionStream(req.Model, req.Messages, req.Tools, tokenInfo.AccessToken, tokenInfo.UserId, req.UseSearch, convId, outputChan)
+		if req.ConversationId == "" {
+			h.kimiClient.RemoveConversation(convId, tokenInfo.AccessToken, tokenInfo.UserId)
+		}
+	}()
+
+	for msg := range outputChan {
+		if strings.HasPrefix(msg, "data: ") && !strings.Contains(msg, "[DONE]") {
+			var chunk OpenAIStreamChunk
+			data := strings.TrimPrefix(msg, "data: ")
+			if err := json.Unmarshal([]byte(data), &chunk); err == nil {
+				if len(chunk.Choices) > 0 {
+					fullContent.WriteString(chunk.Choices[0].Delta.Content)
+				}
+			}
+		}
+	}
+
+	resp := fiber.Map{
+		"id":      convId,
+		"model":   req.Model,
+		"object":  "chat.completion",
+		"created": time.Now().Unix(),
+		"choices": []fiber.Map{
+			{
+				"index": 0,
+				"message": fiber.Map{
+					"role":    "assistant",
+					"content": fullContent.String(),
+				},
+				"finish_reason": "stop",
+			},
+		},
+		"usage": fiber.Map{"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+	}
+	return c.JSON(resp)
+}
