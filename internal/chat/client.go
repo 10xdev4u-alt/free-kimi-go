@@ -238,3 +238,146 @@ func (c *KimiClient) ParseFile(fileId string, accessToken, userId string) error 
 	bodyMap := map[string]interface{}{
 		"ids": []string{fileId},
 	}
+	bodyBytes, _ := json.Marshal(bodyMap)
+	req, err := http.NewRequest("POST", "https://kimi.moonshot.cn/api/file/parse_process", bytes.NewBuffer(bodyBytes))
+	if err != nil {
+		return err
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	for k, v := range core.GetFakeHeaders() {
+		req.Header.Set(k, v)
+	}
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+	req.Header.Set("X-Msh-Platform", "web")
+	req.Header.Set("X-Traffic-Id", userId)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	return nil
+}
+
+func (c *KimiClient) CreateConversation(model string, name string, accessToken, userId string) (string, error) {
+	kimiPlusId := "kimi"
+	if len(model) == 20 {
+		kimiPlusId = model
+	}
+
+	bodyMap := map[string]interface{}{
+		"born_from":   "",
+		"is_example":  false,
+		"kimiplus_id": kimiPlusId,
+		"name":        name,
+	}
+	bodyBytes, _ := json.Marshal(bodyMap)
+	req, err := http.NewRequest("POST", "https://kimi.moonshot.cn/api/chat", bytes.NewBuffer(bodyBytes))
+	if err != nil {
+		return "", err
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	for k, v := range core.GetFakeHeaders() {
+		req.Header.Set(k, v)
+	}
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+	req.Header.Set("X-Msh-Platform", "web")
+	req.Header.Set("X-Traffic-Id", userId)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	reader, err := decompressBody(resp)
+	if err != nil {
+		return "", err
+	}
+	defer reader.Close()
+
+	respBody, _ := io.ReadAll(reader)
+	var result struct {
+		Id string `json:"id"`
+	}
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return "", err
+	}
+
+	return result.Id, nil
+}
+
+func (c *KimiClient) FakeRequest(accessToken, userId string) {
+	endpoints := []string{
+		"https://kimi.moonshot.cn/api/user",
+		"https://kimi.moonshot.cn/api/chat_1m/user/status",
+		"https://kimi.moonshot.cn/api/chat/list",
+		"https://kimi.moonshot.cn/api/show_case/list",
+	}
+	endpoint := endpoints[core.UnixTimestamp()%4] // Simple random
+
+	req, _ := http.NewRequest("GET", endpoint, nil)
+	if strings.Contains(endpoint, "list") {
+		req, _ = http.NewRequest("POST", endpoint, bytes.NewBuffer([]byte(`{"offset":0,"size":50}`)))
+		req.Header.Set("Content-Type", "application/json")
+	}
+
+	for k, v := range core.GetFakeHeaders() {
+		req.Header.Set(k, v)
+	}
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+	req.Header.Set("X-Msh-Platform", "web")
+	req.Header.Set("X-Traffic-Id", userId)
+
+	resp, err := c.httpClient.Do(req)
+	if err == nil {
+		resp.Body.Close()
+	}
+}
+
+func (c *KimiClient) PromptSnippetSubmit(query, accessToken, userId string) {
+	body := map[string]interface{}{
+		"offset": 0,
+		"size":   10,
+		"query":  query,
+	}
+	bodyBytes, _ := json.Marshal(body)
+	req, _ := http.NewRequest("POST", "https://kimi.moonshot.cn/api/prompt-snippet/instance", bytes.NewBuffer(bodyBytes))
+
+	req.Header.Set("Content-Type", "application/json")
+	for k, v := range core.GetFakeHeaders() {
+		req.Header.Set(k, v)
+	}
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+	req.Header.Set("X-Msh-Platform", "web")
+	req.Header.Set("X-Traffic-Id", userId)
+
+	resp, err := c.httpClient.Do(req)
+	if err == nil {
+		resp.Body.Close()
+	}
+}
+
+func (c *KimiClient) RemoveConversation(convId string, accessToken, userId string) error {
+	req, err := http.NewRequest("DELETE", fmt.Sprintf("https://kimi.moonshot.cn/api/chat/%s", convId), nil)
+	if err != nil {
+		return err
+	}
+
+	for k, v := range core.GetFakeHeaders() {
+		req.Header.Set(k, v)
+	}
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+	req.Header.Set("X-Msh-Platform", "web")
+	req.Header.Set("X-Traffic-Id", userId)
+	req.Header.Set("Referer", fmt.Sprintf("https://kimi.moonshot.cn/chat/%s", convId))
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	return nil
+}
