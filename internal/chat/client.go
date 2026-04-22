@@ -118,3 +118,123 @@ func (c *KimiClient) GetUserInfo(accessToken, refreshToken string) (string, erro
 	var result struct {
 		Id string `json:"id"`
 	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return "", err
+	}
+
+	return result.Id, nil
+}
+
+func (c *KimiClient) PreSignUrl(filename string, accessToken, userId string) (string, string, error) {
+	bodyMap := map[string]string{
+		"action": "file",
+		"name":   filename,
+	}
+	bodyBytes, _ := json.Marshal(bodyMap)
+	req, err := http.NewRequest("POST", "https://kimi.moonshot.cn/api/pre-sign-url", bytes.NewBuffer(bodyBytes))
+	if err != nil {
+		return "", "", err
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	for k, v := range core.GetFakeHeaders() {
+		req.Header.Set(k, v)
+	}
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+	req.Header.Set("X-Msh-Platform", "web")
+	req.Header.Set("X-Traffic-Id", userId)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return "", "", err
+	}
+	defer resp.Body.Close()
+
+	reader, err := decompressBody(resp)
+	if err != nil {
+		return "", "", err
+	}
+	defer reader.Close()
+
+	respBody, _ := io.ReadAll(reader)
+	var result struct {
+		Url        string `json:"url"`
+		ObjectName string `json:"object_name"`
+	}
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return "", "", err
+	}
+
+	return result.Url, result.ObjectName, nil
+}
+
+func (c *KimiClient) UploadToOSS(uploadUrl string, fileData []byte, contentType, accessToken, userId string) error {
+	req, err := http.NewRequest("PUT", uploadUrl, bytes.NewBuffer(fileData))
+	if err != nil {
+		return err
+	}
+
+	req.Header.Set("Content-Type", contentType)
+	for k, v := range core.GetFakeHeaders() {
+		req.Header.Set(k, v)
+	}
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+	req.Header.Set("X-Msh-Platform", "web")
+	req.Header.Set("X-Traffic-Id", userId)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	return nil
+}
+
+func (c *KimiClient) CreateFile(filename, objectName, accessToken, userId string) (string, string, error) {
+	bodyMap := map[string]string{
+		"type":        "file",
+		"name":        filename,
+		"object_name": objectName,
+	}
+	bodyBytes, _ := json.Marshal(bodyMap)
+	req, err := http.NewRequest("POST", "https://kimi.moonshot.cn/api/file", bytes.NewBuffer(bodyBytes))
+	if err != nil {
+		return "", "", err
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	for k, v := range core.GetFakeHeaders() {
+		req.Header.Set(k, v)
+	}
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+	req.Header.Set("X-Msh-Platform", "web")
+	req.Header.Set("X-Traffic-Id", userId)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return "", "", err
+	}
+	defer resp.Body.Close()
+
+	reader, err := decompressBody(resp)
+	if err != nil {
+		return "", "", err
+	}
+	defer reader.Close()
+
+	respBody, _ := io.ReadAll(reader)
+	var result struct {
+		Id     string `json:"id"`
+		Status string `json:"status"`
+	}
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return "", "", err
+	}
+
+	return result.Id, result.Status, nil
+}
+
+func (c *KimiClient) ParseFile(fileId string, accessToken, userId string) error {
+	bodyMap := map[string]interface{}{
+		"ids": []string{fileId},
+	}
